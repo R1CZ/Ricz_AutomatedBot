@@ -608,13 +608,13 @@ class TradingBot:
             "trades_today": self.daily_trades
         }
         
-        # Market Data
+        # Market Data - FIX: Use cached_market_data instance variable
         session = get_session_name(datetime.datetime.now())
-        market_data = {
+        market_data = getattr(self, 'cached_market_data', {
             "session": session,
-            "vol_rank": 0.5, # Placeholder, updated in loop
+            "vol_rank": 0.5,
             "price": tick.ask if tick else 0.0
-        }
+        })
         
         # Signal Data
         signal_data = {
@@ -701,7 +701,12 @@ class TradingBot:
                     
                     if df is not None:
                         state = compute_market_state(df, self.spread_model.__dict__, vol_ratio)
-                        market_data["vol_rank"] = state.get("vol_rank", 0.5)
+                        # FIX: Update the instance's cached market data for dashboard
+                        self.cached_market_data = {
+                            "session": session,
+                            "vol_rank": state.get("vol_rank", 0.5),
+                            "price": tick.ask
+                        }
                         
                         # Update Chart Cache for Dashboard
                         last_50 = df.iloc[-50:]
