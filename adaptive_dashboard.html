@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RCZ Adaptive Trading Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.3/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1f2937;
+            --bg-hover: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --accent-orange: #f59e0b;
+            --border-color: #374151;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 280px 1fr 320px;
+            grid-template-rows: auto 1fr;
+            gap: 1rem;
+            padding: 1rem;
+            min-height: 100vh;
+            max-width: 1920px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.2rem;
+        }
+
+        .logo-text h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-text p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-top: 0.25rem;
+        }
+
+        .stat-value.positive { color: var(--accent-green); }
+        .stat-value.negative { color: var(--accent-red); }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            height: calc(100vh - 140px);
+            overflow-y: auto;
+        }
+
+        .sidebar-section h3 {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 1rem;
+        }
+
+        .market-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+        }
+
+        .info-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .info-value {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .session-badge {
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .session-asian { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); }
+        .session-london { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
+        .session-ny { background: rgba(245, 158, 11, 0.2); color: var(--accent-orange); }
+        .session-offpeak { background: rgba(139, 92, 246, 0.2); color: var(--accent-purple); }
+
+        .component-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .component-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.65rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+
+        .component-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .component-name {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .component-signal {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .signal-bar {
+            width: 60px;
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .signal-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .signal-buy { background: var(--accent-green); }
+        .signal-sell { background: var(--accent-red); }
+        .signal-neutral { background: var(--text-secondary); }
+
+        /* Main Content */
+        .main-content {
+            display: grid;
+            grid-template-rows: auto auto 1fr;
+            gap: 1rem;
+            overflow-y: auto;
+        }
+
+        .chart-section {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            padding: 1.25rem;
+            box-shadow: var(--shadow);
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .chart-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .timeframe-selector {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .tf-btn {
+            padding: 0.4rem 0.75rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tf-btn:hover, .tf-btn.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 400px;
+        }
+
+        .signals-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+
+        .signal-card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            padding: 1.25rem;
+            box-shadow: var(--shadow);
+        }
+
+        .signal-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .signal-card-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .signal-strength {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .strength-bar {
+            width: 100px;
+            height: 8px;
+            background: var(--bg-card);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .strength-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .metric-item {
+            padding: 0.75rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+        }
+
+        .metric-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .metric-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* Right Panel */
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            height: calc(100vh - 140px);
+            overflow-y: auto;
+        }
+
+        .panel-card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            padding: 1.25rem;
+            box-shadow: var(--shadow);
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .panel-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .position-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .position-item {
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 8px;
+            border-left: 4px solid var(--accent-blue);
+        }
+
+        .position-item.buy { border-left-color: var(--accent-green); }
+        .position-item.sell { border-left-color: var(--accent-red); }
+
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .position-type {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .position-pnl {
+            font-weight: 600;
+        }
+
+        .position-details {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .trade-history {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .trade-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.65rem;
+            background: var(--bg-card);
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+
+        .trade-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .trade-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .trade-pnl.positive { color: var(--accent-green); }
+        .trade-pnl.negative { color: var(--accent-red); }
+
+        /* Responsive Design */
+        @media (max-width: 1400px) {
+            .dashboard {
+                grid-template-columns: 260px 1fr;
+            }
+            
+            .right-panel {
+                grid-column: 1 / -1;
+                grid-row: auto;
+                height: auto;
+                flex-direction: row;
+                flex-wrap: wrap;
+            }
+            
+            .right-panel > * {
+                flex: 1;
+                min-width: 300px;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto auto;
+            }
+            
+            .sidebar {
+                height: auto;
+                grid-row: auto;
+            }
+            
+            .main-content {
+                grid-row: auto;
+            }
+            
+            .header-stats {
+                display: none;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                padding: 0.5rem;
+                gap: 0.75rem;
+            }
+            
+            .header {
+                flex-direction: column;
+                gap: 1rem;
+                padding: 1rem;
+            }
+            
+            .logo {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .chart-container {
+                height: 300px;
+            }
+            
+            .signals-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .right-panel {
+                flex-direction: column;
+            }
+            
+            .right-panel > * {
+                min-width: 100%;
+            }
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-hover);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-color);
+        }
+
+        /* Loading Animation */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--bg-card);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Alert Banner */
+        .alert-banner {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .alert-warning {
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid var(--accent-orange);
+            color: var(--accent-orange);
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid var(--accent-green);
+            color: var(--accent-green);
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">RCZ</div>
+                <div class="logo-text">
+                    <h1>Adaptive Trading Bot</h1>
+                    <p>Live Market Intelligence • v5.0 Fully Adaptive</p>
+                </div>
+            </div>
+            
+            <div class="header-stats">
+                <div class="stat-item">
+                    <div class="stat-label">Account Balance</div>
+                    <div class="stat-value" id="account-balance">$10,000.00</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Today's P&L</div>
+                    <div class="stat-value positive" id="daily-pnl">+$247.50</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-value" id="win-rate">68.4%</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Total Trades</div>
+                    <div class="stat-value" id="total-trades">147</div>
+                </div>
+            </div>
+            
+            <div class="connection-status">
+                <div class="status-dot"></div>
+                <span>MT5 Connected</span>
+            </div>
+        </header>
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-section">
+                <h3>Market Overview</h3>
+                <div class="market-info">
+                    <div class="info-row">
+                        <span class="info-label">Symbol</span>
+                        <span class="info-value">XAUUSDm</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Current Price</span>
+                        <span class="info-value" id="current-price">$2,034.50</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Spread</span>
+                        <span class="info-value" id="spread-value">1.2 pts</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Session</span>
+                        <span class="session-badge session-london" id="session-badge">London</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Volatility Rank</span>
+                        <span class="info-value" id="vol-rank">62nd %ile</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Market Regime</span>
+                        <span class="info-value" id="market-regime">Trending</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Component Signals</h3>
+                <div class="component-list" id="component-list">
+                    <!-- Components will be populated dynamically -->
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Adaptive Metrics</h3>
+                <div class="market-info">
+                    <div class="info-row">
+                        <span class="info-label">Entry Threshold</span>
+                        <span class="info-value" id="entry-threshold">0.58</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Signal Score</span>
+                        <span class="info-value" id="signal-score">0.72</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Calibrated Prob</span>
+                        <span class="info-value" id="calibrated-prob">64.2%</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Entry Quality</span>
+                        <span class="info-value" id="entry-quality">0.68</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Price Chart -->
+            <div class="chart-section">
+                <div class="chart-header">
+                    <div class="chart-title">Price Action & Signals</div>
+                    <div class="timeframe-selector">
+                        <button class="tf-btn" data-tf="M1">M1</button>
+                        <button class="tf-btn active" data-tf="M5">M5</button>
+                        <button class="tf-btn" data-tf="M15">M15</button>
+                        <button class="tf-btn" data-tf="H1">H1</button>
+                        <button class="tf-btn" data-tf="H4">H4</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Signal Metrics Grid -->
+            <div class="signals-grid">
+                <div class="signal-card">
+                    <div class="signal-card-header">
+                        <div class="signal-card-title">Signal Strength</div>
+                        <div class="signal-strength">
+                            <span id="strength-value">BUY</span>
+                            <div class="strength-bar">
+                                <div class="strength-fill signal-buy" id="strength-bar" style="width: 72%;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <div class="metric-label">Leading Score</div>
+                            <div class="metric-value" id="leading-score">0.847</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Agreement</div>
+                            <div class="metric-value" id="agreement">0.73</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Conflict</div>
+                            <div class="metric-value" id="conflict">0.21</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Reliability</div>
+                            <div class="metric-value" id="reliability">0.68</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="signal-card">
+                    <div class="signal-card-header">
+                        <div class="signal-card-title">Exit Parameters</div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <div class="metric-label">Stop Loss (R)</div>
+                            <div class="metric-value" id="sl-mult">1.85</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Take Profit (R)</div>
+                            <div class="metric-value" id="tp-mult">2.94</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">BE Trigger (R)</div>
+                            <div class="metric-value" id="be-r">0.52</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Trail Start (R)</div>
+                            <div class="metric-value" id="trail-start">1.48</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Trail Distance</div>
+                            <div class="metric-value" id="trail-dist">1.12 ATR</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Lock Trigger (R)</div>
+                            <div class="metric-value" id="lock-r">0.94</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="signal-card">
+                    <div class="signal-card-header">
+                        <div class="signal-card-title">Market State</div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <div class="metric-label">ATR (14)</div>
+                            <div class="metric-value" id="atr-value">2.34</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">RSI (14)</div>
+                            <div class="metric-value" id="rsi-value">58.4</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">MACD Signal</div>
+                            <div class="metric-value" id="macd-signal">Bullish</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">BB Position</div>
+                            <div class="metric-value" id="bb-position">Upper 62%</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Volume Ratio</div>
+                            <div class="metric-value" id="volume-ratio">1.24x</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Micro Bias</div>
+                            <div class="metric-value" id="micro-bias">+0.34</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Panel -->
+        <aside class="right-panel">
+            <div class="panel-card">
+                <div class="panel-header">
+                    <div class="panel-title">Active Positions</div>
+                    <span style="font-size: 0.85rem; color: var(--text-secondary);" id="position-count">0 Open</span>
+                </div>
+                <div class="position-list" id="position-list">
+                    <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                        No active positions
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-card">
+                <div class="panel-header">
+                    <div class="panel-title">Recent Trades</div>
+                    <span style="font-size: 0.85rem; color: var(--text-secondary);" id="trades-count">Last 20</span>
+                </div>
+                <div class="trade-history" id="trade-history">
+                    <!-- Trades will be populated dynamically -->
+                </div>
+            </div>
+
+            <div class="panel-card">
+                <div class="panel-header">
+                    <div class="panel-title">Learning Stats</div>
+                </div>
+                <div class="market-info">
+                    <div class="info-row">
+                        <span class="info-label">Total Records</span>
+                        <span class="info-value" id="learn-records">1,247</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Avg Win Rate</span>
+                        <span class="info-value" id="learn-winrate">64.8%</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Avg Expectancy</span>
+                        <span class="info-value" id="learn-expectancy">+0.42R</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Best Component</span>
+                        <span class="info-value" id="best-component">Structure</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // Initialize Chart.js price chart
+        const ctx = document.getElementById('priceChart').getContext('2d');
+        
+        // Generate sample data
+        function generatePriceData(points = 100) {
+            const data = [];
+            let price = 2030;
+            const now = Date.now();
+            
+            for (let i = points; i >= 0; i--) {
+                const time = now - i * 5 * 60 * 1000; // 5-minute candles
+                const change = (Math.random() - 0.5) * 3;
+                price += change;
+                
+                const open = price;
+                const close = price + (Math.random() - 0.5) * 2;
+                const high = Math.max(open, close) + Math.random() * 1.5;
+                const low = Math.min(open, close) - Math.random() * 1.5;
+                
+                data.push({
+                    x: time,
+                    o: open,
+                    h: high,
+                    l: low,
+                    c: close
+                });
+                
+                price = close;
+            }
+            
+            return data;
+        }
+
+        const priceData = generatePriceData();
+
+        const priceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Close',
+                    data: priceData.map(d => ({ x: d.x, y: d.c })),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: true,
+                    tension: 0.4
+                }, {
+                    label: 'High',
+                    data: priceData.map(d => ({ x: d.x, y: d.h })),
+                    borderColor: 'rgba(16, 185, 129, 0.3)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    borderDash: [5, 5]
+                }, {
+                    label: 'Low',
+                    data: priceData.map(d => ({ x: d.x, y: d.l })),
+                    borderColor: 'rgba(239, 68, 68, 0.3)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    borderDash: [5, 5]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            color: '#9ca3af',
+                            font: { size: 11 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1f2937',
+                        titleColor: '#f9fafb',
+                        bodyColor: '#9ca3af',
+                        borderColor: '#374151',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': $' + context.parsed.y.toFixed(2);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'minute',
+                            displayFormats: {
+                                minute: 'HH:mm'
+                            }
+                        },
+                        grid: {
+                            color: '#374151'
+                        },
+                        ticks: {
+                            color: '#9ca3af'
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: '#374151'
+                        },
+                        ticks: {
+                            color: '#9ca3af',
+                            callback: function(value) {
+                                return '$' + value.toFixed(0);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Component signals data
+        const components = [
+            { name: 'Structure', signal: 'buy', strength: 0.78 },
+            { name: 'Alignment', signal: 'buy', strength: 0.65 },
+            { name: 'Momentum', signal: 'buy', strength: 0.72 },
+            { name: 'Order Flow', signal: 'neutral', strength: 0.45 },
+            { name: 'Volatility', signal: 'buy', strength: 0.58 },
+            { name: 'SMC', signal: 'sell', strength: 0.34 },
+            { name: 'Divergence', signal: 'neutral', strength: 0.42 },
+            { name: 'Impulse', signal: 'buy', strength: 0.81 },
+            { name: 'Pullback', signal: 'neutral', strength: 0.38 },
+            { name: 'Candle', signal: 'buy', strength: 0.69 },
+            { name: 'Micro', signal: 'buy', strength: 0.74 }
+        ];
+
+        // Populate component list
+        const componentList = document.getElementById('component-list');
+        components.forEach(comp => {
+            const item = document.createElement('div');
+            item.className = 'component-item';
+            
+            const signalClass = comp.signal === 'buy' ? 'signal-buy' : 
+                               comp.signal === 'sell' ? 'signal-sell' : 'signal-neutral';
+            
+            item.innerHTML = `
+                <span class="component-name">${comp.name}</span>
+                <div class="component-signal">
+                    <span style="font-size: 0.75rem; color: ${comp.signal === 'buy' ? 'var(--accent-green)' : comp.signal === 'sell' ? 'var(--accent-red)' : 'var(--text-secondary)'}">
+                        ${comp.signal.toUpperCase()}
+                    </span>
+                    <div class="signal-bar">
+                        <div class="signal-fill ${signalClass}" style="width: ${comp.strength * 100}%"></div>
+                    </div>
+                </div>
+            `;
+            
+            componentList.appendChild(item);
+        });
+
+        // Sample trade history
+        const trades = [
+            { time: '10:42', type: 'BUY', pnl: '+$47.20', result: 'positive' },
+            { time: '09:15', type: 'SELL', pnl: '-$23.50', result: 'negative' },
+            { time: '08:33', type: 'BUY', pnl: '+$89.40', result: 'positive' },
+            { time: '07:21', type: 'BUY', pnl: '+$34.80', result: 'positive' },
+            { time: '06:45', type: 'SELL', pnl: '+$56.70', result: 'positive' },
+            { time: '05:12', type: 'SELL', pnl: '-$18.90', result: 'negative' },
+            { time: '04:38', type: 'BUY', pnl: '+$72.30', result: 'positive' },
+            { time: '03:55', type: 'SELL', pnl: '+$41.60', result: 'positive' }
+        ];
+
+        const tradeHistory = document.getElementById('trade-history');
+        trades.forEach(trade => {
+            const item = document.createElement('div');
+            item.className = 'trade-item';
+            item.innerHTML = `
+                <div class="trade-info">
+                    <span style="font-weight: 600;">${trade.type}</span>
+                    <span class="trade-time">${trade.time}</span>
+                </div>
+                <span class="trade-pnl ${trade.result}">${trade.pnl}</span>
+            `;
+            tradeHistory.appendChild(item);
+        });
+
+        // Simulate live updates
+        function updateLiveMetrics() {
+            // Update price
+            const currentPriceEl = document.getElementById('current-price');
+            const basePrice = 2034.50;
+            const randomChange = (Math.random() - 0.5) * 0.5;
+            const newPrice = basePrice + randomChange;
+            currentPriceEl.textContent = `$${newPrice.toFixed(2)}`;
+            
+            // Update spread
+            const spreadEl = document.getElementById('spread-value');
+            const newSpread = (1.0 + Math.random() * 0.8).toFixed(1);
+            spreadEl.textContent = `${newSpread} pts`;
+            
+            // Update some metrics with small variations
+            const metrics = ['leading-score', 'agreement', 'reliability', 'signal-score', 'entry-quality'];
+            metrics.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    const baseValue = parseFloat(el.textContent);
+                    const variation = (Math.random() - 0.5) * 0.02;
+                    const newValue = (baseValue + variation).toFixed(3);
+                    el.textContent = newValue;
+                }
+            });
+            
+            // Update strength bar
+            const strengthBar = document.getElementById('strength-bar');
+            const newStrength = 65 + Math.random() * 15;
+            strengthBar.style.width = `${newStrength}%`;
+        }
+
+        // Update every 2 seconds
+        setInterval(updateLiveMetrics, 2000);
+
+        // Timeframe selector functionality
+        document.querySelectorAll('.tf-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                
+                // In real implementation, this would fetch new data for the selected timeframe
+                console.log(`Switched to ${this.dataset.tf}`);
+            });
+        });
+
+        // Responsive adjustments
+        window.addEventListener('resize', () => {
+            priceChart.resize();
+        });
+    </script>
+</body>
+</html>
