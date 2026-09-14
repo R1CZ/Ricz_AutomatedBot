@@ -1,1 +1,1 @@
-Nothing should be ignored based on the provided file changes, as they consist only of source/config files (.py and .md) without any build artifacts, dependencies, or temporary files.
+Nothing needs to be added to .gitignore since only a Python source file (RCZ_v6_PREDICTIVE.py) was added, which is a source code file that should not be ignored.
