@@ -743,38 +743,81 @@ class LearningMemory:
         return pairs[-1][0]
 
     def get_base_threshold(self, context: dict):
+        """
+        Get base threshold from historical trades.
+        FIXED: Use ALL trades with data, not just winners.
+        Optimize for expectancy boundary, not winner scores.
+        """
         candidates = self._context_candidates(context)
         for f in candidates:
-            recs = [r for r in self.query(**f) if safe_float(r.get("pnl", 0.0)) > 0]
+            recs = self.query(**f)
+            # Filter to trades with valid scores
             vals = []
             weights = []
+            pnl_vals = []
             for r in recs:
                 v = safe_float(r.get("entry_score", r.get("raw_score", 0.55)), 0.55)
-                if v > 0:
+                pnl = safe_float(r.get("pnl", 0.0), 0.0)
+                if v > 0 and r.get("pnl") is not None:
                     vals.append(v)
+                    pnl_vals.append(pnl)
                     weights.append(recency_weight(r.get("ts", time.time())))
+            
             if len(vals) >= 12:
-                p = self._weighted_percentile(vals, weights, 38.0)
+                # Find threshold that separates positive vs negative expectancy
+                # Sort by score and find where EV turns positive
+                pairs = sorted(zip(vals, pnl_vals, weights), key=lambda x: x[0])
+                
+                # Try different percentile thresholds
+                best_threshold = None
+                best_ev = -999
+                
+                for pct in [35, 40, 45, 50]:
+                    idx = max(1, int(len(pairs) * pct / 100))
+                    above_pnl = [p for _, p, _ in pairs[idx:]]
+                    above_w = [w for _, _, w in pairs[idx:]]
+                    
+                    if len(above_pnl) >= 5:
+                        total_w = sum(above_w)
+                        if total_w > 0:
+                            ev = sum(p * w for p, w in zip(above_pnl, above_w)) / total_w
+                            if ev > best_ev and ev >= 0:
+                                best_ev = ev
+                                best_threshold = pairs[idx][0]
+                
+                if best_threshold is not None:
+                    return clamp(best_threshold, 0.48, 0.65)
+                
+                # Fallback to weighted percentile
+                p = self._weighted_percentile(vals, weights, 40.0)
                 if p is not None:
-                    return clamp(p, 0.50, 0.68)
-        return 0.56
+                    return clamp(p, 0.48, 0.65)
+        
+        return 0.54
 
     def get_score_scale(self, context: dict):
+        """
+        Get score scaling factor from historical data.
+        FIXED: Use ALL trades, not just winners.
+        Scale based on typical score distribution for valid entries.
+        """
         candidates = self._context_candidates(context)
         for f in candidates:
-            recs = [r for r in self.query(**f) if safe_float(r.get("pnl", 0.0)) > 0]
+            recs = self.query(**f)
+            # Use all trades with valid scores (not filtered by PnL)
             vals = []
             weights = []
             for r in recs:
                 v = safe_float(r.get("lead_score", r.get("raw_score", 0.6)), 0.6)
-                if v > 0:
+                if v > 0 and r.get("entry_score") is not None:
                     vals.append(v)
                     weights.append(recency_weight(r.get("ts", time.time())))
             if len(vals) >= 10:
-                p = self._weighted_percentile(vals, weights, 75.0)
+                # Use median score as scale reference (not 75th percentile of winners)
+                p = self._weighted_percentile(vals, weights, 50.0)
                 if p is not None:
-                    return clamp(p, 0.35, 1.75)
-        return 0.75
+                    return clamp(p, 0.30, 1.50)
+        return 0.65
 
     def bin_calibration(self, raw: float, context: dict):
         raw = clamp(raw, 0.0, 1.0)
@@ -2120,6 +2163,7 @@ class AdaptiveSignalEngine:
             "_micro_bias": safe_float(comps["micro"].get("bias", 0.0)),
         }
 
+        # Add reliability_avg and news_state to signal return dict for proper persistence
         return {
             "ts": time.time(),
             "direction": direction,
@@ -2134,6 +2178,8 @@ class AdaptiveSignalEngine:
             "agreement": agreement,
             "conflict": conflict,
             "lead_score": agg["lead_score"],
+            "reliability_avg": reliability_avg,  # FIX: persist to top level
+            "news_state": news_state,            # FIX: persist news_state
             "context": context,
             "entry_type": entry_type,
             "regime": state.get("regime", "NORMAL"),
@@ -3118,7 +3164,8 @@ class TradingBot:
                             "agreement": float(signal.get("agreement", 0.0)),
                             "conflict": float(signal.get("conflict", 0.0)),
                             "lead_score": float(signal.get("lead_score", 0.0)),
-                            "reliability_avg": float(signal.get("report", {}).get("reliability_avg", 0.5)),
+                            "reliability_avg": float(signal.get("reliability_avg", 0.5)),  # FIX: from top level
+                            "news_state": signal.get("news_state", "NORMAL"),              # FIX: from signal
                             "entry_price": float(price),
                             "sl": float(sl),
                             "tp": float(tp),
@@ -3133,7 +3180,6 @@ class TradingBot:
                             "stage": 0,
                             "invalidation_count": 0,
                             "contributions": signal.get("report", {}).get("_contributions", {}),
-                            "news_state": context.get("news_state", "NORMAL"),
                         }
                         self.open_meta[str(ticket)] = meta
                         self._maybe_save_meta(force=True)
@@ -3284,6 +3330,11 @@ class TradingBot:
             log("WARN", f"Early exit failed [{rc}] #{pos.ticket}")
 
     def evaluate_invalidation(self, df_m1, signal: dict, state: dict):
+        """
+        Evaluate whether current open positions should be invalidated.
+        UPGRADE: Adaptive grace period based on market state and thesis integrity.
+        Separates invalidation decision from flip logic.
+        """
         try:
             if not signal:
                 return
@@ -3322,7 +3373,26 @@ class TradingBot:
                 adverse_dist = max(0.0, -profit_dist)
                 adverse_atr = adverse_dist / atr if atr > 0 else 0.0
 
-                if hold_sec < MIN_HOLD_SECONDS and adverse_atr < 1.0:
+                # ADAPTIVE GRACE PERIOD: Replace fixed MIN_HOLD_SECONDS
+                # Strong original signal + low adverse movement = shorter grace
+                # Weak signal or high adverse = longer grace needed
+                orig_score = safe_float(meta.get("entry_score", 0.55), 0.55)
+                orig_quality = safe_float(meta.get("entry_quality", 0.50), 0.50)
+                
+                # Base grace: 8-16 seconds depending on original signal quality
+                base_grace = clamp(16.0 - (orig_score + orig_quality) * 8.0, 8.0, 16.0)
+                
+                # Volatility adjustment: higher vol = slightly longer grace (more noise)
+                vol_factor = clamp(1.0 + state.get("vol_rank", 0.5) * 0.3, 1.0, 1.3)
+                adaptive_grace = base_grace * vol_factor
+                
+                # If adverse move is small, allow shorter grace
+                if adverse_atr < 0.15:
+                    adaptive_grace *= 0.75
+                elif adverse_atr > 0.50:
+                    adaptive_grace *= 1.20
+
+                if hold_sec < adaptive_grace and adverse_atr < 1.0:
                     meta["invalidation_count"] = 0
                     continue
 
