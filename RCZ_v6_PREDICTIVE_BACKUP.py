@@ -2874,196 +2874,6 @@ class AdaptiveExitModel:
         }
 
 #============================================================================
-# ENSEMBLE AGENTS & LIQUIDITY TRAP DETECTION
-#============================================================================
-
-class StructuralAgent:
-    """Analyzes Trend, EMA alignment, Swing Points for voting"""
-    def vote(self, df, state: dict) -> tuple:
-        if df is None or len(df) < 50:
-            return "NEUTRAL", 0.5
-            
-        closes = df['close']
-        ema20 = safe_float(df['ema_21'].iloc[-1], closes.iloc[-1])
-        ema50 = safe_float(df['ema_50'].iloc[-1], closes.iloc[-1])
-        last_price = closes.iloc[-1]
-        
-        score_buy = 0.5
-        score_sell = 0.5
-        
-        # EMA Alignment
-        if ema20 > ema50 and last_price > ema20:
-            score_buy += 0.3
-            score_sell -= 0.3
-        elif ema20 < ema50 and last_price < ema20:
-            score_sell += 0.3
-            score_buy -= 0.3
-            
-        # Price Position in Range
-        highest = closes.iloc[-50:].max()
-        lowest = closes.iloc[-50:].min()
-        range_size = highest - lowest
-        if range_size > 0:
-            position = (last_price - lowest) / range_size
-            regime = state.get("regime", "NORMAL")
-            if regime in ["RANGING", "RANGE_BOUND"]:
-                if position < 0.2:
-                    score_buy += 0.4
-                if position > 0.8:
-                    score_sell += 0.4
-            else:  # Trending
-                if position > 0.6:
-                    score_buy += 0.2
-                if position < 0.4:
-                    score_sell += 0.2
-                    
-        if score_buy > score_sell:
-            return "BUY", min(score_buy, 1.0)
-        elif score_sell > score_buy:
-            return "SELL", min(score_sell, 1.0)
-        return "NEUTRAL", 0.5
-
-
-class MicrostructureAgent:
-    """Analyzes tick velocity, order flow, momentum acceleration"""
-    def __init__(self, micro_engine=None):
-        self.micro_engine = micro_engine
-        
-    def vote(self, df, state: dict) -> tuple:
-        if df is None or len(df) < 10:
-            return "NEUTRAL", 0.5
-            
-        closes = df['close']
-        volumes = df['volume'] if 'volume' in df.columns else pd.Series([1]*len(df))
-        
-        # Momentum Velocity
-        mom = closes.diff()
-        vol_weighted_mom = (mom * volumes).rolling(5).mean().iloc[-1]
-        
-        score_buy = 0.5
-        score_sell = 0.5
-        
-        if vol_weighted_mom > 0:
-            score_buy += 0.4
-        elif vol_weighted_mom < 0:
-            score_sell += 0.4
-            
-        # Recent Candle Strength
-        last_body = closes.iloc[-1] - df['open'].iloc[-1]
-        prev_body = closes.iloc[-2] - df['open'].iloc[-2]
-        
-        if last_body > 0 and prev_body > 0 and last_body > prev_body:
-            score_buy += 0.2  # Acceleration
-        elif last_body < 0 and prev_body < 0 and last_body < prev_body:
-            score_sell += 0.2
-            
-        if score_buy > score_sell:
-            return "BUY", min(score_buy, 1.0)
-        elif score_sell > score_buy:
-            return "SELL", min(score_sell, 1.0)
-        return "NEUTRAL", 0.5
-
-
-class StatisticalAgent:
-    """Analyzes RSI, Bollinger Bands, Mean Reversion stats"""
-    def vote(self, df, state: dict) -> tuple:
-        if df is None or len(df) < 20:
-            return "NEUTRAL", 0.5
-            
-        closes = df['close']
-        rsi = safe_float(df['rsi'].iloc[-1], 50.0)
-        
-        # Bollinger Bands
-        sma = closes.rolling(20).mean()
-        std = closes.rolling(20).std()
-        upper = sma + (2 * std)
-        lower = sma - (2 * std)
-        last_price = closes.iloc[-1]
-        
-        score_buy = 0.5
-        score_sell = 0.5
-        
-        regime = state.get("regime", "NORMAL")
-        if regime in ["RANGING", "RANGE_BOUND"]:
-            # Mean Reversion Strategy
-            if rsi < 30 and last_price < lower:
-                score_buy += 0.5
-            elif rsi > 70 and last_price > upper:
-                score_sell += 0.5
-        else:
-            # Trend Following Stats
-            if rsi > 50 and rsi < 70:  # Healthy bull
-                score_buy += 0.3
-            elif rsi < 50 and rsi > 30:  # Healthy bear
-                score_sell += 0.3
-                
-        if score_buy > score_sell:
-            return "BUY", min(score_buy, 1.0)
-        elif score_sell > score_buy:
-            return "SELL", min(score_sell, 1.0)
-        return "NEUTRAL", 0.5
-
-
-class LiquidityAnalyzer:
-    """Detects liquidity traps and fake-outs to avoid bad entries"""
-    def __init__(self):
-        self.recent_sweeps = []
-        
-    def detect_trap(self, df, direction: str) -> bool:
-        """
-        Detects if a recent high/low break was a 'fake-out' (liquidity sweep).
-        Returns True if a TRAP is detected (DO NOT TRADE).
-        """
-        if df is None or len(df) < 10:
-            return False
-            
-        closes = df['close']
-        highs = df['high']
-        lows = df['low']
-        bodies = (closes - df['open']).abs()
-        wicks_upper = highs - pd.concat([closes, df['open']], axis=1).max(axis=1)
-        wicks_lower = pd.concat([closes, df['open']], axis=1).min(axis=1) - lows
-        
-        last_close = closes.iloc[-1]
-        prev_high = highs.iloc[-10:-1].max() if len(df) > 10 else highs.iloc[-1]
-        prev_low = lows.iloc[-10:-1].min() if len(df) > 10 else lows.iloc[-1]
-        
-        is_trap = False
-        
-        if direction == "BUY":
-            # Trap for BUY: Price breaks recent HIGH, but closes near LOW (Shooting Star)
-            recent_high_break = highs.iloc[-1] > prev_high
-            failed_continuation = last_close < (prev_high + (highs.iloc[-1] - prev_high)*0.3)
-            
-            if recent_high_break and failed_continuation and (float(wicks_upper.iloc[-1]) > float(bodies.iloc[-1])*2):
-                is_trap = True
-                
-        elif direction == "SELL":
-            # Trap for SELL: Price breaks recent LOW, but closes near HIGH (Hammer)
-            recent_low_break = lows.iloc[-1] < prev_low
-            failed_continuation = last_close > (prev_low - (prev_low - lows.iloc[-1])*0.3)
-            
-            if recent_low_break and failed_continuation and (float(wicks_lower.iloc[-1]) > float(bodies.iloc[-1])*2):
-                is_trap = True
-                
-        if is_trap:
-            self.recent_sweeps.append(time.time())
-            # Keep only recent sweeps (last 60 seconds)
-            now = time.time()
-            self.recent_sweeps = [t for t in self.recent_sweeps if now - t < 60]
-            
-        return is_trap
-    
-    def is_recent_sweep(self, window_sec: int = 60) -> bool:
-        """Check if a liquidity sweep occurred recently"""
-        now = time.time()
-        for t in self.recent_sweeps:
-            if now - t < window_sec:
-                return True
-        return False
-
-
-#============================================================================
 # ADAPTIVE SIGNAL ENGINE
 #============================================================================
 
@@ -3077,17 +2887,6 @@ class AdaptiveSignalEngine:
         self.threshold_engine = AdaptiveThresholdEngine()
         self.probability = AdaptiveProbabilityModel()
         self.aggregator = AdaptiveSignalAggregator(memory)
-        
-        # ENSEMBLE AGENTS - Independent voting systems for accuracy
-        self.structural_agent = StructuralAgent()
-        self.micro_agent = MicrostructureAgent(micro_engine=micro)
-        self.statistical_agent = StatisticalAgent()
-        
-        # LIQUIDITY TRAP DETECTION
-        self.liquidity_analyzer = LiquidityAnalyzer()
-        
-        # MINIMUM VOTES FOR CONSENSUS
-        self.min_ensemble_votes = 2  # Out of 3 agents must agree
 
     def _entry_type(self, leading_sign: int, comps: dict):
         imp = comps.get("impulse", {})
@@ -3149,49 +2948,14 @@ class AdaptiveSignalEngine:
         except Exception:
             return 0.35
 
-    def run_ensemble_vote(self, df, state: dict) -> tuple:
-        """
-        Run all 3 ensemble agents and return consensus decision.
-        Returns (direction, confidence, vote_count)
-        """
-        # Get votes from all agents
-        v1, s1 = self.structural_agent.vote(df, state)
-        v2, s2 = self.micro_agent.vote(df, state)
-        v3, s3 = self.statistical_agent.vote(df, state)
-        
-        votes = {"BUY": 0, "SELL": 0, "NEUTRAL": 0}
-        scores = {"BUY": [], "SELL": []}
-        
-        for v, s in [(v1, s1), (v2, s2), (v3, s3)]:
-            votes[v] += 1
-            if v != "NEUTRAL":
-                scores[v].append(s)
-        
-        # Determine winner - need minimum votes for consensus
-        if votes["BUY"] >= self.min_ensemble_votes:
-            avg_score = np.mean(scores["BUY"]) if scores["BUY"] else 0.5
-            return "BUY", avg_score, votes["BUY"]
-        elif votes["SELL"] >= self.min_ensemble_votes:
-            avg_score = np.mean(scores["SELL"]) if scores["SELL"] else 0.5
-            return "SELL", avg_score, votes["SELL"]
-        else:
-            return "WAIT", 0.5, 0
-    
     def analyze(self, df_m1, df_m5, df_m15, state: dict, session_name: str, news_state: str):
         tick = mt5.symbol_info_tick(SYMBOL)
         if tick is None or df_m1 is None:
             return None
-        
+
         spread_pts = (tick.ask - tick.bid) / XAUUSD_POINT
         self.spread_model.update(spread_pts, session_name)
-        
-        # ENSEMBLE VOTING - Check for consensus first
-        ensemble_dir, ensemble_conf, ensemble_votes = self.run_ensemble_vote(df_m1, state)
-        
-        # LIQUIDITY TRAP CHECK - Block trades if trap detected
-        trap_buy = self.liquidity_analyzer.detect_trap(df_m1, "BUY")
-        trap_sell = self.liquidity_analyzer.detect_trap(df_m1, "SELL")
-        
+
         context = {
             "session": session_name,
             "regime": state.get("regime", "NORMAL"),
@@ -3200,44 +2964,31 @@ class AdaptiveSignalEngine:
             "direction": None,
             "entry_type": "STANDARD",
         }
-        
+
         comps = self.components.compute_all(df_m1, df_m5, df_m15, state, self.micro)
-        
+
         # Preliminary aggregate for entry type inference
         prelim = self.aggregator.aggregate(comps, context)
         leading_sign = prelim["leading_sign"]
         entry_type = self._entry_type(leading_sign, comps)
-        
+
         context["direction"] = "BUY" if leading_sign > 0 else "SELL"
         context["entry_type"] = entry_type
-        
+
         weights, reliabilities, reliability_avg = self.weight_engine.get_weights(self.memory, context)
-        
+
         for c in COMPONENTS:
             comps[c]["weight"] = weights.get(c, 1.0)
             comps[c]["reliability"] = reliabilities.get(c, 0.5)
-        
+
         agg = self.aggregator.aggregate(comps, context)
-        
+
         leading_sign = agg["leading_sign"]
         direction_sign = agg["direction_sign"]
         raw_score = agg["raw_score"]
         agreement = agg["agreement"]
         conflict = agg["conflict"]
-        
-        # ENSEMBLE CONFLICT CHECK - If ensemble disagrees with main signal, reduce confidence
-        if ensemble_dir == "BUY" and direction_sign < 0:
-            conflict = min(conflict + 0.15, 1.0)  # Increase conflict
-        elif ensemble_dir == "SELL" and direction_sign > 0:
-            conflict = min(conflict + 0.15, 1.0)
-        
-        # Apply ensemble confidence boost if aligned
-        if (ensemble_dir == "BUY" and direction_sign > 0) or (ensemble_dir == "SELL" and direction_sign < 0):
-            if ensemble_votes >= 3:  # Unanimous
-                raw_score = min(raw_score * 1.08, 1.0)
-            elif ensemble_votes >= 2:  # Majority
-                raw_score = min(raw_score * 1.04, 1.0)
-        
+
         threshold = self.threshold_engine.get(
             self.memory,
             context,
@@ -3245,9 +2996,9 @@ class AdaptiveSignalEngine:
             news_state,
             self.spread_model
         )
-        
+
         sl_mult, tp_mult = AdaptiveExitModel.get_sl_tp(self.memory, context, state, entry_type)
-        
+
         features = np.array(
             [
                 1.0,
@@ -3263,23 +3014,17 @@ class AdaptiveSignalEngine:
             ],
             dtype=float
         )
-        
+
         calibrated = self.probability.calibrate(self.memory, raw_score, context, features)
-        
+
         entry_quality = self._entry_quality(direction_sign, comps, agg, state, calibrated, tp_mult)
         features[5] = clamp(entry_quality, 0.0, 1.0)
         calibrated = self.probability.calibrate(self.memory, raw_score, context, features)
-        
+
         entry_score = clamp(0.58 * calibrated + 0.42 * entry_quality, 0.0, 1.0)
-        
-        # ENHANCED FILTERING - Must pass ensemble AND liquidity checks
-        ensemble_block = (ensemble_dir == "WAIT" or ensemble_votes < self.min_ensemble_votes)
-        liquidity_block = ((direction_sign > 0 and trap_buy) or (direction_sign < 0 and trap_sell))
-        
+
         allowed = (
             direction_sign != 0
-            and not ensemble_block
-            and not liquidity_block
             and entry_score >= threshold
             and calibrated >= max(0.45, threshold - 0.07)
             and entry_quality >= max(0.34, threshold - 0.18)
